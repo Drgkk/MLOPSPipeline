@@ -203,4 +203,4 @@ data:
     \ != \"succeeded\":\n        raise RuntimeError(f\"Kubeflow run {run.run_id} ended\
     \ with state {completed.state}\")\n    print(f\"Run {run.run_id} succeeded\",\
     \ flush=True)\n\n\nif __name__ == \"__main__\":\n    main()\n"
-  revision: 815cd21d0759b1b3647dc45cd6dd358c1d2066e3
+  revision: c03574e6fe133b5f4c6c96f5d936d26119447ff8
