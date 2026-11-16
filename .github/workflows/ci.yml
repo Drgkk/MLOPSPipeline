@@ -1,0 +1,58 @@
+name: Compile and publish pipeline manifests
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - breast_cancer_pipeline.py
+      - submit_pipeline.py
+      - requirements-ci.txt
+      - scripts/**
+      - deploy/settings.yaml
+      - deploy/submit-job.yaml
+      - .github/workflows/ci.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pipeline-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  compile:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create isolated Python environment
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -r requirements-ci.txt
+      - name: Validate and compile pipeline
+        env:
+          PYTHONPATH: .
+        run: |
+          .venv/bin/python -m py_compile breast_cancer_pipeline.py submit_pipeline.py scripts/build_manifests.py
+          .venv/bin/python scripts/build_manifests.py
+      - name: Publish generated manifest to Git
+        env:
+          BRANCH: ${{ github.ref_name }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          git fetch origin "$BRANCH"
+          if [ "$(git rev-parse "origin/$BRANCH")" != "$SOURCE_SHA" ]; then
+            echo "Branch advanced; skipping this stale build. The newer push will build it."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/pipeline-configmap.yaml
+          if git diff --cached --quiet; then
+            echo "No generated changes"
+            exit 0
+          fi
+          git commit -m "ci: publish compiled breast cancer pipeline"
+          git push origin "HEAD:$BRANCH"

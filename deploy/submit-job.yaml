@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: submit-breast-cancer-pipeline
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 2400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: submit
+          image: python:3.11-slim
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              pip install --no-cache-dir kfp==2.18.0
+              python -u /pipeline/submit_pipeline.py
+          envFrom:
+            - configMapRef:
+                name: breast-cancer-settings
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: pipeline
+              mountPath: /pipeline
+              readOnly: true
+      volumes:
+        - name: pipeline
+          configMap:
+            name: breast-cancer-pipeline

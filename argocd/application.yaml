@@ -1,0 +1,17 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: breast-cancer-mlops
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Drgkk/MLOPSPipeline.git
+    targetRevision: master
+    path: deploy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kubeflow
+  syncPolicy:
+    automated:
+      prune: true
