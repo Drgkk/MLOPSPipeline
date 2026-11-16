@@ -1,0 +1,337 @@
+# PIPELINE DEFINITION
+# Name: breast-cancer-decision-tree
+# Description: Load, clean, split, train and evaluate sklearn's breast cancer dataset.
+# Inputs:
+#    max_depth: int [Default: 5.0]
+#    random_state: int [Default: 42.0]
+#    test_size: float [Default: 0.2]
+components:
+  comp-evaluate-model:
+    executorLabel: exec-evaluate-model
+    inputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+        test_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        confusion_matrix:
+          artifactType:
+            schemaTitle: system.ClassificationMetrics
+            schemaVersion: 0.0.1
+        metrics:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+  comp-import-dataset:
+    executorLabel: exec-import-dataset
+    outputDefinitions:
+      artifacts:
+        dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-preprocess-and-split:
+    executorLabel: exec-preprocess-and-split
+    inputDefinitions:
+      artifacts:
+        dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        random_state:
+          parameterType: NUMBER_INTEGER
+        test_size:
+          parameterType: NUMBER_DOUBLE
+    outputDefinitions:
+      artifacts:
+        test_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        train_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+  comp-train-model:
+    executorLabel: exec-train-model
+    inputDefinitions:
+      artifacts:
+        train_dataset:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        max_depth:
+          parameterType: NUMBER_INTEGER
+        random_state:
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+deploymentSpec:
+  executors:
+    exec-evaluate-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas==2.2.3'\
+          \ 'scikit-learn==1.6.1' 'joblib==1.4.2'  &&  python3 -m pip install --quiet\
+          \ --no-warn-script-location 'kfp==2.18.0' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate_model(\n    test_dataset: Input[Dataset],\n    model:\
+          \ Input[Model],\n    metrics: Output[Metrics],\n    confusion_matrix: Output[ClassificationMetrics],\n\
+          ):\n    \"\"\"Evaluate held-out data; malignant (sklearn label 0) is the\
+          \ positive class.\"\"\"\n    import joblib\n    import pandas as pd\n  \
+          \  from sklearn.metrics import (\n        accuracy_score,\n        classification_report,\n\
+          \        confusion_matrix as calculate_confusion_matrix,\n        f1_score,\n\
+          \        precision_score,\n        recall_score,\n        roc_auc_score,\n\
+          \    )\n\n    test = pd.read_csv(test_dataset.path)\n    features, target\
+          \ = test.drop(columns=[\"target\"]), test[\"target\"]\n    classifier =\
+          \ joblib.load(model.path)\n    predictions = classifier.predict(features)\n\
+          \    malignant_index = list(classifier.classes_).index(0)\n    malignant_probability\
+          \ = classifier.predict_proba(features)[:, malignant_index]\n\n    scores\
+          \ = {\n        \"accuracy\": accuracy_score(target, predictions),\n    \
+          \    \"precision_malignant\": precision_score(target, predictions, pos_label=0,\
+          \ zero_division=0),\n        \"recall_malignant\": recall_score(target,\
+          \ predictions, pos_label=0, zero_division=0),\n        \"f1_malignant\"\
+          : f1_score(target, predictions, pos_label=0, zero_division=0),\n       \
+          \ \"roc_auc_malignant\": roc_auc_score(target == 0, malignant_probability),\n\
+          \    }\n    for name, value in scores.items():\n        metrics.log_metric(name,\
+          \ float(value))\n    confusion_matrix.log_confusion_matrix(\n        categories=[\"\
+          malignant\", \"benign\"],\n        matrix=calculate_confusion_matrix(target,\
+          \ predictions, labels=[0, 1]).tolist(),\n    )\n    print(classification_report(target,\
+          \ predictions, labels=[0, 1],\n                                target_names=[\"\
+          malignant\", \"benign\"], zero_division=0))\n    print(scores)\n\n"
+        image: python:3.11-slim
+    exec-import-dataset:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - import_dataset
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas==2.2.3'\
+          \ 'scikit-learn==1.6.1' 'joblib==1.4.2'  &&  python3 -m pip install --quiet\
+          \ --no-warn-script-location 'kfp==2.18.0' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef import_dataset(dataset: Output[Dataset]):\n    from sklearn.datasets\
+          \ import load_breast_cancer\n\n    data = load_breast_cancer(as_frame=True)\n\
+          \    data.frame.to_csv(dataset.path, index=False)\n    dataset.metadata[\"\
+          rows\"] = int(len(data.frame))\n    dataset.metadata[\"target_names\"] =\
+          \ data.target_names.tolist()\n\n"
+        image: python:3.11-slim
+    exec-preprocess-and-split:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - preprocess_and_split
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas==2.2.3'\
+          \ 'scikit-learn==1.6.1' 'joblib==1.4.2'  &&  python3 -m pip install --quiet\
+          \ --no-warn-script-location 'kfp==2.18.0' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef preprocess_and_split(\n    dataset: Input[Dataset],\n    train_dataset:\
+          \ Output[Dataset],\n    test_dataset: Output[Dataset],\n    test_size: float,\n\
+          \    random_state: int,\n):\n    import numpy as np\n    import pandas as\
+          \ pd\n    from sklearn.model_selection import train_test_split\n\n    if\
+          \ not 0.0 < test_size < 1.0:\n        raise ValueError(\"test_size must\
+          \ be between 0 and 1.\")\n\n    frame = pd.read_csv(dataset.path)\n    original_rows\
+          \ = len(frame)\n    frame = frame.replace([np.inf, -np.inf], np.nan).dropna().drop_duplicates()\n\
+          \    if frame.empty or frame[\"target\"].nunique() != 2:\n        raise\
+          \ ValueError(\"Cleaned dataset must contain both target classes.\")\n\n\
+          \    train, test = train_test_split(\n        frame,\n        test_size=test_size,\n\
+          \        random_state=random_state,\n        stratify=frame[\"target\"],\n\
+          \    )\n\n    for artifact, split in [(train_dataset, train), (test_dataset,\
+          \ test)]:\n        split.to_csv(artifact.path, index=False)\n        artifact.metadata[\"\
+          rows\"] = int(len(split))\n        artifact.metadata[\"removed_rows\"] =\
+          \ int(original_rows - len(frame))\n    print(f\"Cleaned {original_rows}\
+          \ -> {len(frame)} rows; train={len(train)}, test={len(test)}\")\n\n"
+        image: python:3.11-slim
+    exec-train-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - train_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas==2.2.3'\
+          \ 'scikit-learn==1.6.1' 'joblib==1.4.2'  &&  python3 -m pip install --quiet\
+          \ --no-warn-script-location 'kfp==2.18.0' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef train_model(\n    train_dataset: Input[Dataset],\n    model:\
+          \ Output[Model],\n    max_depth: int,\n    random_state: int,\n):\n    import\
+          \ joblib\n    import pandas as pd\n    from sklearn.tree import DecisionTreeClassifier\n\
+          \n    train = pd.read_csv(train_dataset.path)\n    classifier = DecisionTreeClassifier(max_depth=max_depth,\
+          \ random_state=random_state)\n    classifier.fit(train.drop(columns=[\"\
+          target\"]), train[\"target\"])\n    joblib.dump(classifier, model.path)\n\
+          \    model.metadata[\"framework\"] = \"scikit-learn\"\n    model.metadata[\"\
+          model_type\"] = \"DecisionTreeClassifier\"\n    model.metadata[\"max_depth\"\
+          ] = max_depth\n\n"
+        image: python:3.11-slim
+pipelineInfo:
+  description: Load, clean, split, train and evaluate sklearn's breast cancer dataset.
+  name: breast-cancer-decision-tree
+root:
+  dag:
+    tasks:
+      evaluate-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate-model
+        dependentTasks:
+        - preprocess-and-split
+        - train-model
+        inputs:
+          artifacts:
+            model:
+              taskOutputArtifact:
+                outputArtifactKey: model
+                producerTask: train-model
+            test_dataset:
+              taskOutputArtifact:
+                outputArtifactKey: test_dataset
+                producerTask: preprocess-and-split
+        taskInfo:
+          name: evaluate-model
+      import-dataset:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-import-dataset
+        taskInfo:
+          name: import-dataset
+      preprocess-and-split:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-preprocess-and-split
+        dependentTasks:
+        - import-dataset
+        inputs:
+          artifacts:
+            dataset:
+              taskOutputArtifact:
+                outputArtifactKey: dataset
+                producerTask: import-dataset
+          parameters:
+            random_state:
+              componentInputParameter: random_state
+            test_size:
+              componentInputParameter: test_size
+        taskInfo:
+          name: preprocess-and-split
+      train-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-train-model
+        dependentTasks:
+        - preprocess-and-split
+        inputs:
+          artifacts:
+            train_dataset:
+              taskOutputArtifact:
+                outputArtifactKey: train_dataset
+                producerTask: preprocess-and-split
+          parameters:
+            max_depth:
+              componentInputParameter: max_depth
+            random_state:
+              componentInputParameter: random_state
+        taskInfo:
+          name: train-model
+  inputDefinitions:
+    parameters:
+      max_depth:
+        defaultValue: 5.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      random_state:
+        defaultValue: 42.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      test_size:
+        defaultValue: 0.2
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.18.0
